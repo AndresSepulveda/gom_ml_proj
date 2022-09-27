@@ -5,7 +5,6 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
@@ -15,12 +14,17 @@ class SRCNN(nn.Module):
         self.conv1 = nn.Conv2d(noi, 64, kernel_size=9, padding=2, padding_mode='replicate')
         self.conv2 = nn.Conv2d(64, 32, kernel_size=1, padding=2, padding_mode='replicate')
         self.conv3 = nn.Conv2d(32, noi, kernel_size=5, padding=2, padding_mode='replicate')
+        self.linear = nn.Linear(2210, 92631)  
         
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = self.conv3(x)
-        return x
+        
+        a1, a2, a3, a4 = x.shape
+        x2d = torch.reshape(x[:,0,:,:], (a1, a3*a4))
+        
+        return self.linear(x2d)
 
     
 class Dataset(torch.utils.data.Dataset):
@@ -64,7 +68,9 @@ def train(model, dataloader, optimizer, criterion):
         # zero grad the optimizer
         optimizer.zero_grad()
         outputs = model(image_data)
-        loss = criterion(outputs, label)
+        out = torch.reshape(outputs, (outputs.shape[0], label.shape[2], label.shape[3]))[:,None,:,:]
+
+        loss = criterion(out, label)
         
         # backpropagation
         loss.backward()
@@ -76,7 +82,7 @@ def train(model, dataloader, optimizer, criterion):
         running_loss += loss.item()
         
         # calculate batch psnr (once every `batch_size` iterations)
-        batch_psnr = psnr(label, outputs)
+        batch_psnr = psnr(label, out)
         running_psnr += batch_psnr
         
     final_loss = running_loss/len(dataloader.dataset)
@@ -96,17 +102,16 @@ def validate(model, dataloader, criterion):
             label = data[1].to(device)
             
             outputs = model(image_data)
-            loss = criterion(outputs, label)
+            out = torch.reshape(outputs, (outputs.shape[0], label.shape[2], label.shape[3]))[:,None,:,:]
+            loss = criterion(out, label)
             
             # add loss of each item (total items in a batch = batch size) 
             running_loss += loss.item()
             
             # calculate batch psnr (once every `batch_size` iterations)
-            batch_psnr = psnr(label, outputs)
+            batch_psnr = psnr(label, out)
             running_psnr += batch_psnr
-            
-        outputs = outputs.cpu()
-        
+                    
     final_loss = running_loss/len(dataloader.dataset)
     final_psnr = running_psnr/int(len(dataloader.dataset)/dataloader.batch_size)
     
@@ -156,11 +161,6 @@ def run_model(model, train_loader, val_loader,
         if plot:
             live_plot(psnr_dict)
             
-        # if epoch % 100 == 0:
-        #     print('EPOCH {}: train valid PSNR: {:3e} {:3e}'.format(epoch + 1, train_epoch_psnr, val_epoch_psnr))
-        #     print('EPOCH {}: train valid loss: {:3e} {:3e}'.format(epoch + 1, train_epoch_loss, val_epoch_loss))
-        #     print('-----' * 30)
-
     end = time.time()
     print(f"Finished training in: {((end-start)/60):.3f} minutes")
     
